@@ -1,0 +1,158 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Enhanced Backgrounds for a softer, slightly warmer feel */
+    --background: 220 20% 98%; /* Lighter, less saturated */
+    --foreground: 220 25% 15%; /* Deeper text color */
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 15%;
+
+    /* Primary and Secondary: Slightly richer hues */
+    --primary: 215 80% 30%; /* Slightly darker primary */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 195 90% 45%; /* Slightly desaturated secondary for better contrast */
+    --secondary-foreground: 220 25% 15%;
+
+    /* Muted and Accent */
+    --muted: 220 15% 94%; /* Softer muted background */
+    --muted-foreground: 220 10% 40%; /* Slightly darker muted text */
+
+    --accent: 195 90% 45%;
+    --accent-foreground: 220 25% 15%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Border, Input, Ring: Softer definition */
+    --border: 220 15% 90%;
+    --input: 220 20% 92%;
+    --ring: 215 80% 30%; /* Matches new primary */
+
+    --radius: 0.75rem;
+    
+    /* Enhanced Gradients for more depth */
+    --gradient-hero: linear-gradient(135deg, hsl(215 80% 20%), hsl(215 80% 30%)); /* Deeper contrast */
+    --gradient-card: linear-gradient(135deg, hsl(0 0% 100% / 0.98), hsl(220 20% 98% / 0.98)); /* More opaque and subtle */
+    
+    /* Enhanced Shadow Glow: More pronounced but softer */
+    --shadow-glow: 0 0 50px hsl(195 90% 45% / 0.25); 
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* Sidebar - Adjusted for Light Mode */
+    --sidebar-background: 220 20% 94%; /* Slightly deeper background */
+    --sidebar-foreground: 220 25% 15%;
+    --sidebar-primary: 215 80% 30%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 15% 90%;
+    --sidebar-accent-foreground: 220 25% 15%;
+    --sidebar-border: 220 15% 85%;
+    --sidebar-ring: 215 80% 30%;
+  }
+
+  .dark {
+    /* Dark Mode Enhancement: Deeper background, brighter foreground */
+    --background: 220 50% 5%; /* Very deep blue-black */
+    --foreground: 0 0% 95%;
+
+    --card: 220 40% 10%; /* Deeper card */
+    --card-foreground: 0 0% 95%;
+
+    --popover: 220 40% 10%;
+    --popover-foreground: 0 0% 95%;
+
+    /* Inverted Primary/Secondary for a modern dark scheme */
+    --primary: 195 90% 55%; /* Brighter, more vibrant primary */
+    --primary-foreground: 220 50% 5%;
+
+    --secondary: 215 80% 35%; /* Primary color as secondary in dark mode */
+    --secondary-foreground: 0 0% 95%;
+
+    --muted: 220 30% 15%; /* Deeper muted background */
+    --muted-foreground: 220 10% 65%; /* Slightly brighter muted text */
+
+    --accent: 195 90% 55%;
+    --accent-foreground: 220 50% 5%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 95%;
+
+    --border: 220 30% 18%;
+    --input: 220 30% 15%;
+    --ring: 195 90% 55%;
+    
+    /* Dark Mode Gradients and Shadow */
+    --gradient-hero: linear-gradient(135deg, hsl(215 80% 10%), hsl(215 80% 20%)); /* Deeper base */
+    --gradient-card: linear-gradient(135deg, hsl(220 40% 10% / 0.98), hsl(220 30% 12% / 0.98));
+    --shadow-glow: 0 0 50px hsl(195 90% 55% / 0.35); /* Brighter glow */
+
+    /* Sidebar - Adjusted for Dark Mode */
+    --sidebar-background: 220 40% 10%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 195 90% 55%;
+    --sidebar-primary-foreground: 220 50% 5%;
+    --sidebar-accent: 220 30% 15%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 220 30% 18%;
+    --sidebar-ring: 195 90% 55%;
+  }
+}
+
+/* --- */
+
+/* Text Shadow Utility for "Shadowy Dynamics" */
+/* This defines new Tailwind utilities you can use like 'text-shadow-sm' */
+@layer utilities {
+  /* Subtle shadow for a gentle lift or depth */
+  .text-shadow-sm {
+    text-shadow: 1px 1px 2px hsl(var(--foreground) / 0.1), 
+                 -1px -1px 2px hsl(var(--background) / 0.1); /* Subtle light source effect */
+  }
+  
+  /* Medium shadow for headers or callouts */
+  .text-shadow-md {
+    text-shadow: 2px 2px 4px hsl(var(--foreground) / 0.2), 
+                 -2px -2px 4px hsl(var(--background) / 0.05);
+  }
+  
+  /* Strong shadow for hero text or large displays */
+  .text-shadow-lg {
+    text-shadow: 4px 4px 8px hsl(var(--foreground) / 0.3), 
+                 -2px -2px 4px hsl(var(--background) / 0.05); 
+  }
+
+  /* Inverse/Inset shadow for a debossed or sunken look */
+  .text-shadow-inset {
+    text-shadow: 0px 0px 1px hsl(var(--foreground) / 0.5), /* Sharp inner highlight */
+                 1px 1px 3px hsl(var(--background) / 0.3); /* Softer outer shadow */
+  }
+
+  /* A glow/blur effect, great for dark mode */
+  .text-shadow-glow {
+    text-shadow: 0 0 5px hsl(var(--primary) / 0.5),
+                 0 0 10px hsl(var(--primary) / 0.3);
+  }
+}
+
+/* --- */
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
