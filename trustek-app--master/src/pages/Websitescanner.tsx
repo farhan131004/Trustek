@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import {
   Search,
   Send,
@@ -160,14 +163,43 @@ const WebsiteScannerPage: React.FC = () => {
     { icon: <CheckCircle className="w-5 h-5 text-green-500" />, text: "Finalizing Verification Report..." },
   ];
 
+  const navigate = useNavigate();
+
   return (
-    <div className="min-h-screen container mx-auto py-12 px-4 sm:px-6 lg:px-8">
-      <h1 className="text-5xl font-extrabold text-primary mb-2">
-        Website Scanner & Fraud Check (Demo)
-      </h1>
-      <p className="text-xl text-muted-foreground mb-10">
-        Verify any website link or analyze a screenshot for phishing, fraud, and legitimacy.
-      </p>
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
+      <header className="container mx-auto px-4 py-6 sticky top-0 z-10 bg-background/80 backdrop-blur-sm">
+        <nav className="flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-8 w-8 text-primary" />
+            <span className="text-2xl font-bold">Trustek Shield</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <ThemeToggle />
+            <Button 
+              onClick={() => navigate('/dashboard')} 
+              variant="outline"
+              size="sm"
+              className="text-accent border-accent hover:bg-accent/10"
+            >
+              Dev Dashboard
+            </Button>
+          </div>
+        </nav>
+      </header>
+
+      <div className="container mx-auto py-12 px-4 sm:px-6 lg:px-8">
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary mb-4">
+            <Globe className="h-4 w-4" />
+            <span className="text-sm font-medium">Website Verification</span>
+          </div>
+          <h1 className="text-5xl font-extrabold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+            Website Scanner & Fraud Check
+          </h1>
+          <p className="text-xl text-muted-foreground">
+            Verify any website link or analyze a screenshot for phishing, fraud, and legitimacy.
+          </p>
+        </div>
 
       <div className="bg-card p-8 rounded-xl shadow-2xl border border-border">
         <div className="space-y-6">
@@ -313,7 +345,8 @@ const WebsiteScannerPage: React.FC = () => {
         </div>
       )}
     </div>
-  );
+  </div>
+);
 };
 
 export default WebsiteScannerPage;

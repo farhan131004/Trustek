@@ -208,13 +208,26 @@ public class MLService {
 
             HttpEntity<Map<String, String>> entity = new HttpEntity<>(body, headers);
 
-            ResponseEntity<Map<String, Object>> response = restTemplate.postForEntity(
-                    mlServiceUrl + "/analyze-url",
-                    entity,
-                    (Class<Map<String, Object>>) (Class<?>) Map.class
-            );
+            // Try /fact-check endpoint first (for compatibility), fallback to /analyze-url
+            ResponseEntity<Map<String, Object>> response;
+            try {
+                response = restTemplate.postForEntity(
+                        mlServiceUrl + "/fact-check",
+                        entity,
+                        (Class<Map<String, Object>>) (Class<?>) Map.class
+                );
+            } catch (Exception e) {
+                // Fallback to analyze-url if fact-check fails
+                response = restTemplate.postForEntity(
+                        mlServiceUrl + "/analyze-url",
+                        entity,
+                        (Class<Map<String, Object>>) (Class<?>) Map.class
+                );
+            }
 
             return response.getBody();
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            throw new RuntimeException("AI Service unavailable. Please ensure the Flask service is running on port 5000.");
         } catch (Exception e) {
             throw new RuntimeException("URL analysis failed: " + e.getMessage());
         }
@@ -271,6 +284,11 @@ public class MLService {
             );
 
             return response.getBody();
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("status", "unhealthy");
+            error.put("error", "AI Service unavailable. Flask service is not running on port 5000.");
+            return error;
         } catch (Exception e) {
             Map<String, Object> error = new HashMap<>();
             error.put("status", "unhealthy");

@@ -120,7 +120,7 @@ public class MLController {
     }
 
     @GetMapping("/health")
-    public ResponseEntity<Map<String, Object>> checkHealth(Authentication authentication) {
+    public ResponseEntity<Map<String, Object>> checkHealth(@org.springframework.lang.Nullable Authentication authentication) {
         try {
             Map<String, Object> result = mlService.checkHealth();
             return ResponseEntity.ok(result);

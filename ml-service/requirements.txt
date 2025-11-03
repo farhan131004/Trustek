@@ -11,3 +11,10 @@ beautifulsoup4==4.12.2
 Pillow==10.4.0
 pytesseract==0.3.13
 
+# Headless browser fetch (optional)
+selenium==4.24.0
+undetected-chromedriver==3.5.5
+
+# Gemini SDK
+google-generativeai>=0.7.0
+
