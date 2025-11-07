@@ -207,6 +207,12 @@ class ApiService {
     status: 'Safe' | 'Suspicious';
     summary: string;
     suspicious_keywords_found?: number;
+    credibility_score?: number;
+    ads_count?: number;
+    iframes_count?: number;
+    external_scripts?: number;
+    ad_density?: number;
+    corroboration?: string;
   }> {
     const response = await this.makeRequest<any>('/ml/scan', {
       method: 'POST',
@@ -218,6 +224,38 @@ class ApiService {
       status: result.status || 'Safe',
       summary: result.summary || '',
       suspicious_keywords_found: result.suspicious_keywords_found || 0,
+      credibility_score: result.credibility_score,
+      ads_count: result.ads_count,
+      iframes_count: result.iframes_count,
+      external_scripts: result.external_scripts,
+      ad_density: result.ad_density,
+      corroboration: result.corroboration,
+    };
+  }
+
+  // ML Service - Site Preview (via backend proxy)
+  async getSitePreview(url: string): Promise<{
+    url?: string;
+    title?: string;
+    description?: string;
+    image?: string;
+    site_name?: string;
+    favicon?: string;
+    status?: string;
+  }> {
+    const response = await this.makeRequest<any>('/ml/preview', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    });
+    const r = (response.preview || response.result || response) as any;
+    return {
+      url: r.url,
+      title: r.title,
+      description: r.description,
+      image: r.image,
+      site_name: r.site_name,
+      favicon: r.favicon,
+      status: r.status,
     };
   }
 

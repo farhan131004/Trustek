@@ -1,3 +1,150 @@
+# --- App/Logger Initialization (moved to top to avoid NameError) ---
+import os
+import logging
+from flask import Flask
+from flask_cors import CORS
+
+# Logger
+logger = logging.getLogger("ml-service")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+
+# Flask app
+app = Flask(__name__)
+CORS(app)
+
+# Basic config used later in the file
+FACT_CHECKER_URL = os.getenv("FACT_CHECKER_URL", "http://localhost:8000")
+ENABLE_HEADLESS = (os.getenv("ENABLE_HEADLESS_FETCH", "false").lower() == "true")
+
+# --- Site Preview Utilities ---
+def _get_meta(soup, name):
+    el = soup.find("meta", property=name) or soup.find("meta", attrs={"name": name})
+    return el["content"] if el and "content" in el.attrs else None
+
+def fetch_site_preview(url: str) -> dict:
+    """Robust Open Graph/Twitter Card preview fetcher with sensible fallbacks."""
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Connection": "keep-alive",
+        "Referer": "https://www.google.com/",
+        "DNT": "1",
+    }
+
+    preview = {
+        "url": url,
+        "title": None,
+        "description": None,
+        "image": None,
+        "site_name": None,
+        "favicon": None,
+        "status": "failed",
+    }
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        def find_meta(*names):
+            for name in names:
+                el = soup.find("meta", property=name) or soup.find("meta", attrs={"name": name})
+                if el and el.get("content"):
+                    return el["content"].strip()
+            return None
+
+        title = (
+            find_meta("og:title", "twitter:title")
+            or (soup.title.string.strip() if soup.title and soup.title.string else None)
+        )
+
+        description = find_meta("og:description", "twitter:description", "description")
+
+        image = find_meta("og:image", "twitter:image")
+        if image:
+            image = urljoin(url, image)
+
+        site_name = find_meta("og:site_name") or (urlparse(url).hostname or None)
+
+        icon_link = (
+            soup.find("link", rel=lambda x: x and "icon" in x.lower())
+            or soup.find("link", attrs={"href": lambda x: x and "favicon" in x})
+        )
+        favicon = urljoin(url, icon_link["href"]) if icon_link and icon_link.get("href") else None
+
+        if not description:
+            paragraphs = [
+                p.get_text(strip=True) for p in soup.find_all("p") if len(p.get_text(strip=True)) > 40
+            ]
+            description = (" ".join(paragraphs[:2])[:300]) if paragraphs else "No description available."
+
+        preview.update(
+            {
+                "title": title or "No title found",
+                "description": description,
+                "image": image,
+                "site_name": site_name,
+                "favicon": favicon,
+                "status": "success",
+            }
+        )
+    except requests.exceptions.RequestException as e:
+        preview["error"] = f"Request failed: {e}"
+    except Exception as e:
+        preview["error"] = f"Parsing error: {e}"
+
+    return preview
+
+@app.route('/preview', methods=['GET', 'POST'])
+def site_preview():
+    try:
+        if request.method == 'GET':
+            url = request.args.get('url', '').strip()
+        else:
+            data = request.get_json(silent=True) or {}
+            url = (data.get('url') or '').strip()
+
+        if not url:
+            return jsonify({"error": 'URL is required'}), 400
+
+        preview = fetch_site_preview(url)
+        return jsonify({"success": True, "preview": preview}), 200
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Preview fetch error: {str(e)}")
+        return jsonify({"success": False, "error": f"Fetch failed: {str(e)}"}), 200
+    except Exception as e:
+        logger.error(f"Preview error: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 200
+
+# Compatibility route matching requested interface
+@app.route('/api/preview', methods=['POST'])
+def site_preview_api():
+    try:
+        data = request.get_json(silent=True) or {}
+        url = (data.get('url') or '').strip()
+        if not url:
+            return jsonify({"error": "URL is required"}), 400
+        preview = fetch_site_preview(url)
+        # Return the preview object directly as requested
+        return jsonify(preview), 200
+    except requests.exceptions.RequestException as e:
+        logger.error(f"/api/preview fetch error: {str(e)}")
+        return jsonify({"error": f"Fetch failed: {str(e)}"}), 200
+    except Exception as e:
+        logger.error(f"/api/preview error: {str(e)}")
+        return jsonify({"error": str(e)}), 200
+
 """
 Flask ML Microservice for Fake News Detection, Review Sentiment, and Website Scanning
 Uses HuggingFace transformers for text classification
@@ -6,10 +153,11 @@ Uses HuggingFace transformers for text classification
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 import logging
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
 from PIL import Image
 import pytesseract
 from io import BytesIO
@@ -17,22 +165,12 @@ import os
 import re
 import json
 from dotenv import load_dotenv
+import time
+from functools import lru_cache
 load_dotenv()
+from flask_cors import CORS
 
-
-app = Flask(__name__)
-# Configure CORS to allow Spring Boot gateway and frontend
-CORS(app, 
-     origins=["http://localhost:8081", "http://localhost:8080", "http://localhost:5173", "http://localhost:3000"],
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-ENABLE_HEADLESS = os.getenv('ENABLE_HEADLESS_FETCH', 'false').lower() in ('1', 'true', 'yes')
-
+# ... rest of the code remains the same ...
 # Optional LLM client (multi-provider)
 try:
     from llm_client import call_llm
@@ -51,6 +189,33 @@ fake_news_tokenizer = None
 sentiment_model = None
 sentiment_tokenizer = None
 device = None
+
+# Optional NLI pipeline for stance inference
+NLI_MODEL = os.getenv("FACTCHECK_NLI_MODEL", "facebook/bart-large-mnli")
+try:
+    nli_pipeline = pipeline("text-classification", model=NLI_MODEL)
+    logger.info(f"[✓] Loaded NLI model: {NLI_MODEL}")
+except Exception as e:
+    nli_pipeline = None
+    logger.warning(f"[!] Failed to load NLI model: {e}")
+
+# Simple stance counters
+_stance_counts = {"entailment": 0, "contradiction": 0, "neutral": 0}
+_nli_requests_total = 0
+_nli_latency_ms_sum = 0
+
+
+@lru_cache(maxsize=4096)
+def _nli_cached(query: str):
+    """LRU-cached NLI inference on concatenated input."""
+    try:
+        if not nli_pipeline:
+            return ("neutral", 0.0)
+        out = nli_pipeline(query)[0]
+        return (str(out.get("label", "neutral")).lower(), float(out.get("score", 0.0)))
+    except Exception as e:
+        logger.warning(f"NLI pipeline error: {e}")
+        return ("neutral", 0.0)
 
 
 # ========================
@@ -121,8 +286,63 @@ def health_check():
         'status': 'healthy',
         'fake_news_model_loaded': fake_news_model is not None,
         'sentiment_model_loaded': sentiment_model is not None,
-        'device': device
+        'device': device,
+        'fact_checker_url': FACT_CHECKER_URL,
+        'nli_model_loaded': nli_pipeline is not None,
+        'nli_model_name': NLI_MODEL,
+        'nli_cache_size': getattr(_nli_cached.cache_info(), 'currsize', None) if hasattr(_nli_cached, 'cache_info') else None,
+        'nli_stance_counts': _stance_counts
     }), 200
+
+
+@app.route('/infer-nli', methods=['POST'])
+def infer_nli():
+    """NLI stance inference with LRU cache and latency logging"""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        claim = (data.get('claim') or '').strip()
+        evidence = (data.get('evidence') or '').strip()
+        if not claim or not evidence:
+            return jsonify({"stance": "neutral", "score": 0.0, "error": "claim and evidence required"}), 400
+        start = time.time()
+        label, score = _nli_cached(f"{claim} </s></s> {evidence}")
+        duration_ms = int((time.time() - start) * 1000)
+        global _nli_requests_total, _nli_latency_ms_sum
+        _nli_requests_total += 1
+        _nli_latency_ms_sum += duration_ms
+        if label in _stance_counts:
+            _stance_counts[label] += 1
+        logger.info(f"/infer-nli stance={label} score={score:.3f} latency_ms={duration_ms}")
+        return jsonify({"stance": label, "score": float(score), "latency_ms": duration_ms}), 200
+    except Exception as e:
+        logger.error(f"/infer-nli error: {e}")
+        return jsonify({"stance": "neutral", "score": 0.0, "error": str(e)}), 500
+
+
+@app.route('/metrics', methods=['GET'])
+def metrics():
+    """Prometheus exposition of simple counters and gauges."""
+    try:
+        cache_size = getattr(_nli_cached.cache_info(), 'currsize', 0) if hasattr(_nli_cached, 'cache_info') else 0
+        lines = []
+        lines.append('# HELP ml_nli_requests_total Total NLI requests served')
+        lines.append('# TYPE ml_nli_requests_total counter')
+        lines.append(f'ml_nli_requests_total {_nli_requests_total}')
+        lines.append('# HELP ml_nli_latency_ms_sum Total latency in milliseconds for NLI requests')
+        lines.append('# TYPE ml_nli_latency_ms_sum counter')
+        lines.append(f'ml_nli_latency_ms_sum {_nli_latency_ms_sum}')
+        lines.append('# HELP ml_nli_cache_size Current LRU cache size for NLI')
+        lines.append('# TYPE ml_nli_cache_size gauge')
+        lines.append(f'ml_nli_cache_size {cache_size}')
+        lines.append('# HELP ml_nli_stance_total Stance counts by label')
+        lines.append('# TYPE ml_nli_stance_total counter')
+        for k, v in _stance_counts.items():
+            lines.append(f'ml_nli_stance_total{{stance="{k}"}} {v}')
+        body = "\n".join(lines) + "\n"
+        return body, 200, {"Content-Type": "text/plain; version=0.0.4"}
+    except Exception as e:
+        logger.error(f"/metrics error: {e}")
+        return "", 500
 
 
 @app.route('/fake-news', methods=['POST'])
@@ -220,31 +440,114 @@ def scan_website():
 
         logger.info(f"Scanning website: {url}")
 
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(url, headers=headers, timeout=10)
+        headers = {
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/122.0.0.0 Safari/537.36'
+            ),
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Referer': 'https://www.google.com/',
+            'DNT': '1'
+        }
+        response = requests.get(url, headers=headers, timeout=12)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.content, 'html.parser')
-        text_content = soup.get_text()[:1000].lower()
+        full_text = (soup.get_text() or '').lower()
+        # cap to reasonable length for quick heuristics
+        text_slice = full_text[:4000]
 
+        # 1) Suspicious keyword occurrences (counts, not just presence)
         suspicious_keywords = [
             'phishing', 'scam', 'malware', 'virus', 'free money',
-            'click here', 'urgent', 'verify now', 'password expired'
+            'click here', 'urgent', 'verify now', 'password expired', 'giveaway',
+            'crypto', 'investment', 'guaranteed returns', 'earn quickly', 'limited offer'
         ]
+        suspicious_occurrences = 0
+        for k in suspicious_keywords:
+            try:
+                suspicious_occurrences += len(re.findall(re.escape(k), text_slice))
+            except Exception:
+                # fallback presence check
+                suspicious_occurrences += 1 if k in text_slice else 0
 
-        suspicious_count = sum(1 for k in suspicious_keywords if k in text_content)
+        # 2) Ad density heuristics: count typical ad containers + iframes + external scripts
+        ad_like = 0
+        # common ad tags
+        ad_like += len(soup.find_all(['ins']))  # used by AdSense
+        # class/id patterns containing ad keywords
+        ad_patterns = re.compile(r"ad(s|vert|vertisement)?|sponsor|promo|banner", re.I)
+        for tag in soup.find_all(True):
+            attr_text = f"{tag.get('class', [])} {tag.get('id', '')}"
+            if ad_patterns.search(str(attr_text)):
+                ad_like += 1
+        iframes = soup.find_all('iframe')
+        iframes_count = len(iframes)
+        scripts = soup.find_all('script')
+        external_scripts = sum(1 for s in scripts if s.get('src'))
+        # normalize ad density roughly by total blocks considered
+        denom = max(1, ad_like + iframes_count + external_scripts)
+        ad_density = min(1.0, (ad_like + iframes_count + external_scripts) / (denom * 1.0))  # yields ~1.0 if many
 
-        if suspicious_count >= 2:
-            status = "Suspicious"
-            summary = f"Website contains {suspicious_count} suspicious keywords."
-        else:
-            status = "Safe"
-            summary = "Website appears safe."
+        # 3) Optional corroboration via Google CSE using page title keywords
+        title = (soup.title.string if soup.title and soup.title.string else '').strip()
+        keywords = extract_keywords(title, max_terms=8)
+        corroboration = 'unavailable'
+        corroboration_penalty = 0
+        try:
+            sources = search_sources(' '.join(keywords)[:128], max_results=5, keywords=keywords) if keywords else []
+            if sources is None:
+                sources = []
+            if len(sources) <= 1:
+                corroboration = 'weak'
+                corroboration_penalty = 10
+            else:
+                corroboration = 'strong'
+        except Exception:
+            sources = []
+            corroboration = 'unavailable'
+
+        # 4) Credibility scoring heuristic (0-100, higher is safer)
+        score = 90
+        # suspicious keywords penalty
+        if suspicious_occurrences >= 5:
+            score -= 25
+        elif suspicious_occurrences >= 2:
+            score -= 15
+        elif suspicious_occurrences == 1:
+            score -= 8
+        # ad density penalty (scaled by counts)
+        ad_penalty = min(30, (ad_like + iframes_count + external_scripts) * 2)
+        score -= ad_penalty
+        # corroboration penalty
+        score -= corroboration_penalty
+        score = int(max(0, min(100, score)))
+
+        # status & summary
+        status = "Safe" if score >= 70 and suspicious_occurrences <= 1 else "Suspicious"
+        reasons = []
+        if suspicious_occurrences:
+            reasons.append(f"{suspicious_occurrences} suspicious keyword hits")
+        if (ad_like + iframes_count + external_scripts) >= 8:
+            reasons.append("High ad/iframe/script density detected")
+        if corroboration == 'weak':
+            reasons.append("Weak corroboration from external sources")
+        if not reasons:
+            reasons.append("No strong risk signals detected")
+        summary = "; ".join(reasons)
 
         return jsonify({
             'status': status,
             'summary': summary,
-            'suspicious_keywords_found': suspicious_count
+            'suspicious_keywords_found': suspicious_occurrences,
+            'ads_count': ad_like,
+            'iframes_count': iframes_count,
+            'external_scripts': external_scripts,
+            'ad_density': round(ad_density, 3),
+            'credibility_score': score,
+            'corroboration': corroboration
         }), 200
 
     except requests.exceptions.RequestException as e:
@@ -361,6 +664,68 @@ def analyze_news_unified():
             'error': 'Analysis failed',
             'details': str(e)
         }), 500
+
+
+# ========================
+# FACT-CHECKER PROXY ROUTES
+# ========================
+
+@app.route('/fact-checker/verify', methods=['POST'])
+def fc_verify_proxy():
+    """Proxy JSON to FastAPI fact-checker /verify"""
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+        url = f"{FACT_CHECKER_URL.rstrip('/')}/verify"
+        resp = requests.post(url, json=payload, timeout=30)
+        return jsonify(resp.json()), resp.status_code
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Proxy /verify error: {e}")
+        return jsonify({'error': 'Upstream fact-checker unavailable', 'details': str(e)}), 502
+    except Exception as e:
+        logger.error(f"Proxy /verify failure: {e}")
+        return jsonify({'error': 'Proxy failed', 'details': str(e)}), 500
+
+
+@app.route('/fact-checker/verify-image', methods=['POST'])
+def fc_verify_image_proxy():
+    """Proxy multipart image upload to FastAPI /verify-image"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        f = request.files['file']
+        files = {
+            'file': (f.filename, f.stream, f.mimetype or 'application/octet-stream')
+        }
+        data = {}
+        # allow source_url via form or query
+        src = request.form.get('source_url') or request.args.get('source_url')
+        if src:
+            data['source_url'] = src
+        url = f"{FACT_CHECKER_URL.rstrip('/')}/verify-image"
+        resp = requests.post(url, files=files, data=data, timeout=60)
+        return jsonify(resp.json()), resp.status_code
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Proxy /verify-image error: {e}")
+        return jsonify({'error': 'Upstream fact-checker unavailable', 'details': str(e)}), 502
+    except Exception as e:
+        logger.error(f"Proxy /verify-image failure: {e}")
+        return jsonify({'error': 'Proxy failed', 'details': str(e)}), 500
+
+
+@app.route('/fact-checker/verify-url', methods=['POST'])
+def fc_verify_url_proxy():
+    """Proxy JSON URL extraction to FastAPI /verify-url"""
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+        url = f"{FACT_CHECKER_URL.rstrip('/')}/verify-url"
+        resp = requests.post(url, json=payload, timeout=45)
+        return jsonify(resp.json()), resp.status_code
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Proxy /verify-url error: {e}")
+        return jsonify({'error': 'Upstream fact-checker unavailable', 'details': str(e)}), 502
+    except Exception as e:
+        logger.error(f"Proxy /verify-url failure: {e}")
+        return jsonify({'error': 'Proxy failed', 'details': str(e)}), 500
 
 
 # ========================
@@ -703,7 +1068,15 @@ def extract_text_from_image():
         
         # Read image
         image = Image.open(file.stream)
-        text = pytesseract.image_to_string(image)
+        # Light preprocessing for better OCR
+        try:
+            gray = image.convert('L')
+            bw = gray.point(lambda x: 0 if x < 140 else 255, '1')
+            text = pytesseract.image_to_string(bw)
+            if not text or not text.strip():
+                text = pytesseract.image_to_string(image)
+        except Exception:
+            text = pytesseract.image_to_string(image)
         
         if not text.strip():
             return jsonify({
@@ -784,7 +1157,15 @@ def analyze_from_image():
             return jsonify({'error': 'No image uploaded'}), 400
         
         image = Image.open(request.files['file'].stream)
-        text = pytesseract.image_to_string(image)
+        # Light preprocessing for better OCR
+        try:
+            gray = image.convert('L')
+            bw = gray.point(lambda x: 0 if x < 140 else 255, '1')
+            text = pytesseract.image_to_string(bw)
+            if not text or not text.strip():
+                text = pytesseract.image_to_string(image)
+        except Exception:
+            text = pytesseract.image_to_string(image)
         
         if not text.strip():
             return jsonify({
@@ -798,14 +1179,103 @@ def analyze_from_image():
         fake_result = analyze_fake_news_internal(text)
         
         # Retrieve corroborating sources using extracted text
-        query_text = text[:256]
-        sources = search_sources(query_text, max_results=5)
+        max_results = 0
+        try:
+            max_results_str = request.form.get('max_results') or request.args.get('max_results') or ''
+            max_results = int(max_results_str) if max_results_str else 0
+        except Exception:
+            max_results = 0
+        if max_results <= 0:
+            max_results = 8
+        if max_results > 15:
+            max_results = 15
+        keywords = extract_keywords(text, max_terms=12)
+        query_text = (' '.join(keywords)[:256] or text[:256])
+        sources = search_sources(query_text, max_results=max_results, keywords=keywords)
+
+        # Credibility assessment
+        def _classify_type(src_domain: str, title: str, snippet: str) -> str:
+            d = (src_domain or '').lower()
+            t = (title or '').lower()
+            s = (snippet or '').lower()
+            if d.endswith('.gov') or d.endswith('.mil'):
+                return 'gov_doc'
+            if 'pacer.uscourts' in d or 'courtlistener.com' in d or 'uscourts.gov' in d:
+                return 'court_doc'
+            if 'apnews.com' in d or 'associated press' in t or 'associated press' in s or s.startswith('ap '):
+                return 'wire'
+            major = ['indiatoday.in','timesofindia.indiatimes.com','indianexpress.com','bbc.com','cnn.com','reuters.com','thehindu.com','washingtonpost.com','nytimes.com']
+            if any(m in d for m in major):
+                return 'major_national'
+            return 'local'
+
+        evidence = []
+        kw_set = set([k.lower() for k in (keywords or [])])
+        total_overlap = 0
+        wire_present = False
+        gov_or_court_present = False
+        for s in sources:
+            title = s.get('title')
+            url = s.get('url')
+            snippet = s.get('snippet')
+            domain = s.get('source')
+            typ = _classify_type(domain, title, snippet)
+            wire_present = wire_present or (typ == 'wire')
+            gov_or_court_present = gov_or_court_present or (typ in ('gov_doc','court_doc'))
+            blob = f"{title or ''} {snippet or ''}".lower()
+            words = set(re.findall(r"[a-zA-Z][a-zA-Z\-']+", blob))
+            overlap = len(kw_set.intersection(words)) if kw_set else 0
+            total_overlap += overlap
+            reasons = []
+            if overlap > 0:
+                reasons.append('entity_or_keyword_match')
+            if typ in ('wire','gov_doc','court_doc'):
+                reasons.append('high_authority_source')
+            evidence.append({
+                'url': url,
+                'title': title,
+                'source': domain,
+                'snippet': snippet,
+                'type': typ,
+                'match_reasons': reasons
+            })
+
+        outlet_count = len(sources)
+        avg_overlap = (total_overlap / outlet_count) if outlet_count else 0
+        credibility_score = 0
+        credibility_score += min(outlet_count, 8) * 8
+        if wire_present:
+            credibility_score += 20
+        if gov_or_court_present:
+            credibility_score += 20
+        credibility_score += min(int(avg_overlap), 10)
+        credibility_score = max(0, min(100, credibility_score))
+
+        if outlet_count >= 3 and credibility_score >= 60:
+            verdict = 'REAL'
+        elif outlet_count >= 1:
+            verdict = 'MIXED'
+        else:
+            verdict = 'UNVERIFIED'
+
+        corroboration_summary = {
+            'outlet_count': outlet_count,
+            'wire_present': wire_present,
+            'gov_or_court_present': gov_or_court_present,
+            'avg_keyword_overlap': avg_overlap
+        }
 
         return jsonify({
             'label': fake_result['label'],
             'confidence': fake_result['confidence'],
             'extracted_text': text[:300],
-            'sources': sources
+            'query': query_text,
+            'keywords': keywords,
+            'sources': sources,
+            'verdict': verdict,
+            'credibility_score': credibility_score,
+            'corroboration_summary': corroboration_summary,
+            'evidence': evidence
         }), 200
         
     except Exception as e:
@@ -1163,5 +1633,5 @@ if __name__ == '__main__':
     load_sentiment_model()
     logger.info("✅ All models loaded successfully")
 
-    logger.info("🌐 Starting Flask server on port 5000...")
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    logger.info("🌐 Starting Flask server on port 8001...")
+    app.run(host='0.0.0.0', port=8001, debug=False)

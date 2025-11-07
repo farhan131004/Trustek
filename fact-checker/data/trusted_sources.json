@@ -1,0 +1,28 @@
+{
+  "high": [
+    "reuters.com",
+    "apnews.com",
+    "bbc.com",
+    "who.int",
+    "un.org",
+    "nytimes.com",
+    "washingtonpost.com",
+    "theguardian.com",
+    "nature.com",
+    "sciencedirect.com",
+    "aljazeera.com",
+    "economist.com",
+    "indiatoday.in",
+    "thehindu.com",
+    "indianexpress.com",
+    "indiatimes.com",
+    "livemint.com",
+    "business-standard.com",
+    "scroll.in",
+    "moneycontrol.com",
+    "hindustantimes.com",
+    "livehindustan.com"
+  ],
+  "medium": ["cnn.com", "foxnews.com"],
+  "low": ["blogspot.com", "unknown", "reddit.com"]
+}

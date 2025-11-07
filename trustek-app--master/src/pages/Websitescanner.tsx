@@ -2,6 +2,8 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import apiService from '@/services/api';
+import VerificationReport from '../components/VerificationReport';
 import {
   Search,
   Send,
@@ -22,15 +24,37 @@ interface AnalysisResult {
   sources: { uri: string; title: string }[];
 }
 
+interface SitePreview {
+  url?: string;
+  title?: string;
+  description?: string;
+  image?: string;
+  site_name?: string;
+  favicon?: string;
+  status?: string;
+}
+
 const WebsiteScannerPage: React.FC = () => {
   const [query, setQuery] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [sitePreview, setSitePreview] = useState<SitePreview | null>(null);
 
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingStage, setLoadingStage] = useState<number>(0);
+  const [progress, setProgress] = useState<number>(0);
+
+  // computed verification metrics
+  const [trustScore, setTrustScore] = useState<number | null>(null); // 0-100 (higher is safer)
+  const [riskLevel, setRiskLevel] = useState<'Safe' | 'Suspicious' | 'Fishy' | null>(null);
+  const [suspiciousCount, setSuspiciousCount] = useState<number | null>(null);
+  const [adsCount, setAdsCount] = useState<number | null>(null);
+  const [iframesCount, setIframesCount] = useState<number | null>(null);
+  const [externalScripts, setExternalScripts] = useState<number | null>(null);
+  const [adDensity, setAdDensity] = useState<number | null>(null);
+  const [corroboration, setCorroboration] = useState<string | null>(null);
 
   // --- handle image preview ---
   useEffect(() => {
@@ -62,9 +86,18 @@ const WebsiteScannerPage: React.FC = () => {
     setResult(null);
     setError(null);
     setLoadingStage(0);
+    setSitePreview(null);
+    setTrustScore(null);
+    setRiskLevel(null);
+    setSuspiciousCount(null);
+    setAdsCount(null);
+    setIframesCount(null);
+    setExternalScripts(null);
+    setAdDensity(null);
+    setCorroboration(null);
   };
 
-  // --- MOCK VERIFICATION LOGIC ---
+  // --- Verification Logic (calls backend /api/ml/scan via apiService) ---
   const handleVerification = async () => {
     if (!query.trim() && !file) {
       setError("Please enter a URL or upload a screenshot to analyze.");
@@ -74,60 +107,86 @@ const WebsiteScannerPage: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setResult(null);
+    setTrustScore(null);
+    setRiskLevel(null);
+    setSuspiciousCount(null);
+    setProgress(0);
+    setSitePreview(null);
+    setAdsCount(null);
+    setIframesCount(null);
+    setExternalScripts(null);
+    setAdDensity(null);
+    setCorroboration(null);
 
     try {
-      // Simulate loading stages
-      const steps = [1, 2, 3, 4, 5];
-      for (const step of steps) {
-        setLoadingStage(step);
-        await new Promise((res) => setTimeout(res, 600));
+      // staged loading UX
+      const steps = [
+        { stage: 1, delay: 400, pct: 15 },
+        { stage: 2, delay: 450, pct: 35 },
+        { stage: 3, delay: 500, pct: 60 },
+        { stage: 4, delay: 500, pct: 80 },
+      ];
+      for (const s of steps) {
+        setLoadingStage(s.stage);
+        setProgress(s.pct);
+        await new Promise((res) => setTimeout(res, s.delay));
       }
 
-      // Demo verdict logic (mocked)
-      let verdictText = "";
-      let verdictLabel = "";
-      let sources = [];
-
-      if (query.includes("bbc.com")) {
-        verdictLabel = "SAFE / VERIFIED";
-        verdictText =
-          "The BBC website is a verified and trusted source of news. No suspicious activity detected.";
-        sources = [
-          { uri: "https://www.bbc.com", title: "BBC Official Website" },
-        ];
-      } else if (
-        query.includes("scam") ||
-        query.includes("fraud") ||
-        query.includes("phishing")
-      ) {
-        verdictLabel = "FRAUD / FAKE";
-        verdictText =
-          "⚠️ The provided URL contains suspicious keywords indicating potential scam or phishing intent.";
-        sources = [
-          { uri: "https://www.google.com/search?q=scam+warnings", title: "Scam Warnings" },
-        ];
-      } else {
-        verdictLabel = "SUSPICIOUS / WARNING";
-        verdictText =
-          "⚠️ Unable to verify this website. Please proceed with caution. This may be a new or unverified domain.";
-        sources = [
-          { uri: "https://www.safeweb.norton.com", title: "Norton Safe Web" },
-        ];
+      // Call backend website scanner
+      if (!query.trim()) {
+        // If only screenshot provided, ask for URL (backend scanner expects URL)
+        throw new Error('Please provide a URL for website scanning. Image analysis is available in Fake News (Image) flow.');
       }
 
-      // Fake AI-like structured result
-      const fakeResponse: AnalysisResult = {
+      const scan = await apiService.scanWebsite(query.trim());
+
+      // Use ML API signals (suspicious keywords, credibility_score, status)
+      const suspicious = typeof scan.suspicious_keywords_found === 'number' ? scan.suspicious_keywords_found : 0;
+      setSuspiciousCount(suspicious);
+
+      const providedScore = typeof scan.credibility_score === 'number' ? scan.credibility_score : undefined;
+      const computedTrust = providedScore !== undefined
+        ? Math.max(0, Math.min(100, Math.round(providedScore)))
+        : (() => {
+            const baseFromStatus = scan.status === 'Safe' ? 75 : 40; // fallback baseline
+            const penalty = Math.min(60, suspicious * 15);
+            return Math.max(0, Math.min(100, baseFromStatus - penalty + (scan.status === 'Safe' && suspicious === 0 ? 15 : 0)));
+          })();
+      setTrustScore(computedTrust);
+      const level: 'Safe' | 'Suspicious' | 'Fishy' = computedTrust >= 70 ? 'Safe' : computedTrust >= 40 ? 'Suspicious' : 'Fishy';
+      setRiskLevel(level);
+
+      const verdictLabel = level === 'Safe' ? 'SAFE / VERIFIED'
+        : level === 'Suspicious' ? 'SUSPICIOUS / WARNING'
+        : 'POTENTIALLY FISHY';
+      const verdictText = scan.summary || '';
+
+      const response: AnalysisResult = {
         text: `**VERDICT:** ${verdictLabel}\n\n${verdictText}`,
-        sources,
+        sources: [],
       };
 
-      setResult(fakeResponse);
+      setResult(response);
+      if (typeof scan.ads_count !== 'undefined') setAdsCount(scan.ads_count || 0);
+      if (typeof scan.iframes_count !== 'undefined') setIframesCount(scan.iframes_count || 0);
+      if (typeof scan.external_scripts !== 'undefined') setExternalScripts(scan.external_scripts || 0);
+      if (typeof scan.ad_density !== 'undefined') setAdDensity(typeof scan.ad_density === 'number' ? scan.ad_density : null);
+      if (typeof scan.corroboration !== 'undefined') setCorroboration(scan.corroboration || null);
+
+      try {
+        const pv = await apiService.getSitePreview(query.trim());
+        setSitePreview(pv);
+      } catch (e) {
+        console.debug('Site preview fetch failed', e);
+      }
+      setProgress(100);
     } catch (err) {
       console.error("Mock verification failed:", err);
-      setError("Verification failed. Try again.");
+      setError(err instanceof Error ? err.message : "Verification failed. Try again.");
     } finally {
       setIsLoading(false);
       setLoadingStage(0);
+      setTimeout(() => setProgress(0), 600);
     }
   };
 
@@ -157,10 +216,10 @@ const WebsiteScannerPage: React.FC = () => {
 
   const loadingSteps = [
     { icon: <ShieldCheck className="w-5 h-5 text-primary animate-spin" />, text: "Initializing Security Protocols..." },
-    { icon: <Upload className="w-5 h-5 text-accent animate-pulse" />, text: "Processing Image Screenshot..." },
-    { icon: <Globe className="w-5 h-5 text-primary animate-spin" />, text: "Querying Global Domain Database..." },
-    { icon: <Clock className="w-5 h-5 text-secondary animate-pulse" />, text: "Analyzing Trust Signals and Security Records..." },
-    { icon: <CheckCircle className="w-5 h-5 text-green-500" />, text: "Finalizing Verification Report..." },
+    { icon: <Globe className="w-5 h-5 text-primary animate-spin" />, text: "Verifying URL and DNS records..." },
+    { icon: <Clock className="w-5 h-5 text-secondary animate-pulse" />, text: "Analyzing content & trust signals..." },
+    { icon: <Upload className="w-5 h-5 text-accent animate-pulse" />, text: "Aggregating security intelligence..." },
+    { icon: <CheckCircle className="w-5 h-5 text-green-500" />, text: "Finalizing verification report..." },
   ];
 
   const navigate = useNavigate();
@@ -279,7 +338,7 @@ const WebsiteScannerPage: React.FC = () => {
           {isLoading ? (
             <>
               <div className="animate-spin rounded-full h-5 w-5 border-2 border-current border-t-transparent"></div>
-              <span>{loadingSteps[loadingStage]?.text || "Verifying..."}</span>
+              <span>{loadingSteps[loadingStage]?.text || "Verifying URL..."}</span>
             </>
           ) : (
             <>
@@ -287,6 +346,13 @@ const WebsiteScannerPage: React.FC = () => {
             </>
           )}
         </button>
+
+        {/* Progress bar */}
+        {isLoading && (
+          <div className="mt-3 w-full h-2 bg-muted/40 rounded-full overflow-hidden">
+            <div className="h-2 bg-primary transition-all" style={{ width: `${progress}%` }} />
+          </div>
+        )}
       </div>
 
       {/* Error Display */}
@@ -311,10 +377,114 @@ const WebsiteScannerPage: React.FC = () => {
             </div>
           </div>
 
+          {sitePreview && (
+            <div className="bg-card p-6 rounded-xl shadow-lg border border-border mb-6">
+              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3">
+                    {sitePreview.favicon ? (
+                      <img src={sitePreview.favicon} alt="favicon" className="w-6 h-6 rounded" />
+                    ) : null}
+                    <div className="text-lg font-semibold truncate max-w-[60ch]">
+                      {sitePreview.title || 'No title found'}
+                    </div>
+                  </div>
+                  <div className="text-sm text-muted-foreground mt-1 truncate max-w-[72ch]">
+                    {sitePreview.description || 'No description available.'}
+                  </div>
+                  <div className="mt-2 text-xs opacity-60">
+                    {sitePreview.site_name || (query ? new URL(query).hostname : '')}
+                  </div>
+                </div>
+                {sitePreview.image ? (
+                  <div className="w-full md:w-64 rounded-lg overflow-hidden border border-border">
+                    <img src={sitePreview.image} alt="preview" className="w-full h-40 object-cover" />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          )}
+
+          {/* Metrics */}
+          <div className="grid gap-6 md:grid-cols-3 mb-6">
+            <div className="bg-card p-6 rounded-xl shadow border border-border">
+              <div className="text-sm text-muted-foreground mb-1">Verification Score</div>
+              <div className="text-4xl font-bold">{trustScore ?? 0}%</div>
+              <div className="mt-2 h-2 bg-muted/40 rounded-full overflow-hidden">
+                <div className={`h-2 ${ (trustScore ?? 0) >= 70 ? 'bg-green-500' : (trustScore ?? 0) >= 40 ? 'bg-yellow-500' : 'bg-red-500' }`} style={{ width: `${trustScore ?? 0}%` }} />
+              </div>
+            </div>
+            <div className="bg-card p-6 rounded-xl shadow border border-border">
+              <div className="text-sm text-muted-foreground mb-1">Risk Level</div>
+              <div className="text-2xl font-semibold">{riskLevel ?? 'Unknown'}</div>
+            </div>
+            <div className="bg-card p-6 rounded-xl shadow border border-border">
+              <div className="text-sm text-muted-foreground mb-1">Suspicious Keywords</div>
+              <div className="text-2xl font-semibold">{suspiciousCount ?? 0}</div>
+            </div>
+          </div>
+
           <div className="bg-card p-6 rounded-xl shadow-lg border border-border mb-6">
             <h3 className="text-xl font-bold mb-3 text-primary">Security Summary</h3>
             <div className="whitespace-pre-wrap text-foreground">{result.text}</div>
           </div>
+
+          <div className="bg-card p-6 rounded-xl shadow-lg border border-border mb-6">
+            <h3 className="text-xl font-bold mb-4 text-primary">Signals Summary</h3>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="p-4 rounded-lg border border-border">
+                <div className="text-sm text-muted-foreground">Corroboration</div>
+                <div className="mt-1 text-lg font-semibold">
+                  {corroboration ? corroboration.charAt(0).toUpperCase() + corroboration.slice(1) : 'Unavailable'}
+                </div>
+              </div>
+              <div className="p-4 rounded-lg border border-border">
+                <div className="text-sm text-muted-foreground">Ads</div>
+                <div className="mt-1 text-lg font-semibold">{adsCount ?? 0}</div>
+              </div>
+              <div className="p-4 rounded-lg border border-border">
+                <div className="text-sm text-muted-foreground">Iframes</div>
+                <div className="mt-1 text-lg font-semibold">{iframesCount ?? 0}</div>
+              </div>
+              <div className="p-4 rounded-lg border border-border">
+                <div className="text-sm text-muted-foreground">External Scripts</div>
+                <div className="mt-1 text-lg font-semibold">{externalScripts ?? 0}</div>
+              </div>
+              <div className="p-4 rounded-lg border border-border">
+                <div className="text-sm text-muted-foreground">Ad Density</div>
+                <div className="mt-1 text-lg font-semibold">{adDensity !== null ? adDensity : '—'}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Verification Preview Card (metadata + favicon/thumbnail) */}
+          {query.trim().startsWith('http') && (
+            <div className="mb-6">
+              <VerificationReport
+                url={query.trim()}
+                verdict={riskLevel === 'Safe' ? 'Verified' : riskLevel === 'Suspicious' ? 'Suspicious' : 'Potentially Fishy'}
+                credibilityScore={typeof trustScore === 'number' ? trustScore : undefined}
+                summary={result.text}
+                useScreenshot
+              />
+            </div>
+          )}
+
+          {/* Live Website Preview */}
+          {query.trim().startsWith('http') && (
+            <div className="bg-card p-6 rounded-xl shadow-lg border border-border mb-6">
+              <h3 className="text-xl font-bold mb-3 text-primary">Live Preview</h3>
+              <div className="text-sm text-muted-foreground mb-3">Some sites may block embedding; if the preview fails to load, open the link directly.</div>
+              <div className="w-full rounded-lg overflow-hidden border border-border">
+                <iframe
+                  src={query.trim()}
+                  title="Website Preview"
+                  className="w-full h-[480px] bg-background"
+                  sandbox="allow-same-origin allow-forms allow-popups"
+                />
+              </div>
+            </div>
+          )}
 
           {result.sources.length > 0 && (
             <div className="bg-card p-6 rounded-xl shadow-lg border border-border">

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Send, CheckCircle, XCircle, Image, Globe, Search, ShieldCheck, Info, Shield } from 'lucide-react';
 import apiService from '@/services/api';
+import VerificationReport from '../components/VerificationReport';
 
 // --- Types ---
 interface AnalysisResult {
@@ -467,6 +468,22 @@ const FakeNewsDetectionPage: React.FC = () => {
           <h2 className="text-3xl font-semibold text-foreground mb-6 text-shadow-sm">Verification Report</h2>
           
           <div className="space-y-6">
+            {/* URL Preview Card (only for URL mode) */}
+            {inputType === 'url' && url.trim() && (
+              <VerificationReport
+                url={url.trim()}
+                verdict={result.label === 'Real' ? 'Verified' : 'Not Verified'}
+                credibilityScore={(() => {
+                  // Map existing fields to a 0-100 credibility metric
+                  let score = Math.round((result.confidence || 0) * 100);
+                  if (result.source_status === 'Safe') score = Math.max(score, 85);
+                  if (result.source_status === 'Suspicious') score = Math.min(score, 35);
+                  return Math.max(0, Math.min(100, score));
+                })()}
+                summary={result.source_summary || (result.detected_text ? `Detected: ${result.detected_text.substring(0, 200)}${(result.detected_text || '').length > 200 ? '…' : ''}` : undefined)}
+              />
+            )}
+
             {/* Detected Text */}
             {result.detected_text && (
               <div className="bg-background p-6 rounded-lg border border-border">

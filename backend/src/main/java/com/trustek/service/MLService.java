@@ -11,6 +11,9 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import jakarta.annotation.PostConstruct;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -22,12 +25,19 @@ import java.util.Map;
 public class MLService {
 
     private final RestTemplate restTemplate;
+    private static final Logger log = LoggerFactory.getLogger(MLService.class);
 
     @Value("${ml.service.url}")
     private String mlServiceUrl;
 
     public MLService(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
+    }
+
+    @PostConstruct
+    private void logConfig() {
+        // Log effective ML service URL at startup for easier debugging
+        log.info("[MLService] Using ML service base URL: {}", mlServiceUrl);
     }
 
     /**
@@ -193,6 +203,36 @@ public class MLService {
     }
 
     /**
+     * Fetch OpenGraph/meta preview for a URL via ML service
+     *
+     * @param url The URL to preview
+     * @return Response from ML service, typically { success, preview: {..} }
+     */
+    public Map<String, Object> getSitePreview(String url) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            Map<String, String> body = new HashMap<>();
+            body.put("url", url);
+
+            HttpEntity<Map<String, String>> entity = new HttpEntity<>(body, headers);
+
+            ResponseEntity<Map<String, Object>> response = restTemplate.postForEntity(
+                    mlServiceUrl + "/preview",
+                    entity,
+                    (Class<Map<String, Object>>) (Class<?>) Map.class
+            );
+
+            return response.getBody();
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            throw new RuntimeException("AI Service unavailable. Please ensure the Flask service is running at: " + mlServiceUrl);
+        } catch (Exception e) {
+            throw new RuntimeException("Site preview failed: " + e.getMessage());
+        }
+    }
+
+    /**
      * Analyze fake news from a URL by extracting text and analyzing it
      * 
      * @param url The URL to analyze
@@ -227,9 +267,39 @@ public class MLService {
 
             return response.getBody();
         } catch (org.springframework.web.client.ResourceAccessException e) {
-            throw new RuntimeException("AI Service unavailable. Please ensure the Flask service is running on port 5000.");
+            throw new RuntimeException("AI Service unavailable. Please ensure the Flask service is running at: " + mlServiceUrl);
         } catch (Exception e) {
             throw new RuntimeException("URL analysis failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Analyze a URL using the structured ML endpoint to obtain a credibility score
+     *
+     * @param url The URL to analyze
+     * @return Response containing at least credibility_score and verdict
+     */
+    public Map<String, Object> analyzeStructuredUrl(String url) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            Map<String, String> body = new HashMap<>();
+            body.put("url", url);
+
+            HttpEntity<Map<String, String>> entity = new HttpEntity<>(body, headers);
+
+            ResponseEntity<Map<String, Object>> response = restTemplate.postForEntity(
+                    mlServiceUrl + "/analyze-structured",
+                    entity,
+                    (Class<Map<String, Object>>) (Class<?>) Map.class
+            );
+
+            return response.getBody();
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            throw new RuntimeException("AI Service unavailable. Please ensure the Flask service is running at: " + mlServiceUrl);
+        } catch (Exception e) {
+            throw new RuntimeException("Structured URL analysis failed: " + e.getMessage());
         }
     }
 
@@ -240,6 +310,18 @@ public class MLService {
      * @return Response containing detected_text, label, and confidence
      */
     public Map<String, Object> analyzeFakeNewsFromImage(MultipartFile file) {
+        return analyzeFakeNewsFromImage(file, null);
+    }
+
+    /**
+     * Analyze fake news from an uploaded image using OCR and fake news detection
+     * with optional maxResults to control number of corroborating sources.
+     *
+     * @param file The image file to analyze
+     * @param maxResults Optional maximum number of sources to return
+     * @return Response containing detected_text, label, confidence and evidence
+     */
+    public Map<String, Object> analyzeFakeNewsFromImage(MultipartFile file, Integer maxResults) {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
@@ -256,6 +338,9 @@ public class MLService {
             };
             
             body.add("file", resource);
+            if (maxResults != null && maxResults > 0) {
+                body.add("max_results", String.valueOf(maxResults));
+            }
 
             HttpEntity<MultiValueMap<String, Object>> entity = new HttpEntity<>(body, headers);
 
@@ -282,17 +367,24 @@ public class MLService {
                     mlServiceUrl + "/health",
                     (Class<Map<String, Object>>) (Class<?>) Map.class
             );
-
-            return response.getBody();
+            Map<String, Object> body = response.getBody();
+            Map<String, Object> out = new HashMap<>();
+            if (body != null) {
+                out.putAll(body);
+            }
+            out.put("ml_service_url", mlServiceUrl);
+            return out;
         } catch (org.springframework.web.client.ResourceAccessException e) {
             Map<String, Object> error = new HashMap<>();
             error.put("status", "unhealthy");
-            error.put("error", "AI Service unavailable. Flask service is not running on port 5000.");
+            error.put("error", "AI Service unavailable at: " + mlServiceUrl);
+            error.put("ml_service_url", mlServiceUrl);
             return error;
         } catch (Exception e) {
             Map<String, Object> error = new HashMap<>();
             error.put("status", "unhealthy");
             error.put("error", e.getMessage());
+            error.put("ml_service_url", mlServiceUrl);
             return error;
         }
     }

@@ -4,6 +4,7 @@ import com.trustek.dto.FakeNewsAnalysisRequest;
 import com.trustek.dto.FakeNewsAnalysisResponse;
 import com.trustek.service.FakeNewsService;
 import com.trustek.service.MLService;
+import com.trustek.service.BlacklistService;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -25,10 +26,12 @@ public class FakeNewsController {
 
     private final FakeNewsService fakeNewsService;
     private final MLService mlService;
+    private final BlacklistService blacklistService;
     
-    public FakeNewsController(FakeNewsService fakeNewsService, MLService mlService) {
+    public FakeNewsController(FakeNewsService fakeNewsService, MLService mlService, BlacklistService blacklistService) {
         this.fakeNewsService = fakeNewsService;
         this.mlService = mlService;
+        this.blacklistService = blacklistService;
     }
 
     @PostMapping("/analyze")
@@ -88,7 +91,39 @@ public class FakeNewsController {
                 return ResponseEntity.badRequest().body(error);
             }
 
-            Map<String, Object> result = mlService.analyzeFakeNewsFromUrl(url.trim());
+            String normalized = url.trim();
+            // Block if already blacklisted
+            if (blacklistService.isBlacklisted(normalized)) {
+                Map<String, Object> error = new HashMap<>();
+                error.put("success", false);
+                error.put("error", "URL_BLACKLISTED");
+                error.put("message", "URL is blacklisted due to low credibility");
+                BlacklistService.Entry entry = blacklistService.get(normalized);
+                if (entry != null) {
+                    Map<String, Object> bl = new HashMap<>();
+                    bl.put("credibility_score", entry.credibilityScore);
+                    bl.put("source", entry.source);
+                    bl.put("timestamp", entry.timestamp);
+                    bl.put("reason", entry.reason);
+                    error.put("blacklist", bl);
+                }
+                return ResponseEntity.status(403).body(error);
+            }
+
+            Map<String, Object> result = mlService.analyzeFakeNewsFromUrl(normalized);
+
+            // Structured credibility score for blacklisting decision
+            Map<String, Object> structured = new HashMap<>();
+            try {
+                structured = mlService.analyzeStructuredUrl(normalized);
+            } catch (RuntimeException ignored) {}
+            Integer score = null;
+            if (structured != null && structured.get("credibility_score") instanceof Number) {
+                score = ((Number) structured.get("credibility_score")).intValue();
+            }
+            if (score != null && score < 40) {
+                blacklistService.blacklist(normalized, score, "structured", "credibility_score_below_threshold");
+            }
             
             if (result == null || result.containsKey("error")) {
                 Map<String, Object> error = new HashMap<>();
@@ -103,7 +138,14 @@ public class FakeNewsController {
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
             response.put("message", "Analysis completed successfully");
-            response.put("result", result);
+            // include structured if present
+            if (structured != null && !structured.isEmpty()) {
+                Map<String, Object> merged = new HashMap<>(result);
+                merged.put("structured", structured);
+                response.put("result", merged);
+            } else {
+                response.put("result", result);
+            }
             return ResponseEntity.ok(response);
         } catch (org.springframework.web.client.ResourceAccessException e) {
             Map<String, Object> error = new HashMap<>();

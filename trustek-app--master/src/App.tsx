@@ -15,6 +15,8 @@ import FakeNewsDetection from "./pages/fake-news-detection";
 import WebsiteScannerPage from "./pages/Websitescanner";
 import ReviewAnalyzer from "./pages/ReviewAnalyzer";
 import NotFound from "./pages/NotFound";
+import Team from "./pages/Team";
+import FAQs from "./pages/FAQs";
 
 // --- Protected Route Wrapper ---
 const ProtectedRoute: React.FC<{ element: React.ReactNode }> = ({ element }) => {
@@ -74,7 +76,7 @@ const AppRoutes = () => {
         path="/team"
         element={
           <ProtectedRoute
-            element={<NotFound title="Meet the Team Coming Soon" />}
+            element={<Team />}
           />
         }
       />
@@ -90,7 +92,7 @@ const AppRoutes = () => {
         path="/faqs"
         element={
           <ProtectedRoute
-            element={<NotFound title="Website FAQs Coming Soon" />}
+            element={<FAQs />}
           />
         }
       />

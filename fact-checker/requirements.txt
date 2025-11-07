@@ -1,0 +1,4 @@
+requests>=2.31.0
+tldextract>=5.1.2
+# Optional for better NLP sentiment; if not installed, code falls back gracefully
+# transformers>=4.41.0
